@@ -6,6 +6,7 @@
 #include "AbilitySystem/Abilities/EG_GameplayAbility.h"
 #include "GameplayAbility_Vault.generated.h"
 
+class UAbilityTask_PlayMontageAndWait;
 /**
  * 
  */
@@ -54,7 +55,8 @@ protected:
 	UPROPERTY( EditDefaultsOnly )
 	UAnimMontage* VaultMontage = nullptr;
 
-	class UAbilityTask_PlayMontageAndWait* MontageTask = nullptr;
+	UPROPERTY()
+	UAbilityTask_PlayMontageAndWait* MontageTask = nullptr;
 
 	FVector JumpToLocation;
 	FVector JumpOverLocation;

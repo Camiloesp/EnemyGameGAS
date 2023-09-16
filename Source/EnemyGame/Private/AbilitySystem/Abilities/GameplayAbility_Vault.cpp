@@ -93,17 +93,129 @@ bool UGameplayAbility_Vault::CommitCheck( const FGameplayAbilitySpecHandle Handl
 	}
 
 	const float VerticalTraceLength = FMath::Abs( JumpToLocation.Z - (StartLocation + i * UpVector * HorizontalTraceStep ).Z);
+	
+	FVector VerticalStartLocation = JumpToLocation + UpVector * VerticalTraceLength;
 
-	// 33:24
-	return 1;
+	i = 0;
+
+	const float VerticalTraceCount = MaxVerticalTraceDistance / VerticalTraceStep;
+
+	bool bJumpOverLocationSet = false;
+
+	for ( ; i <= VerticalTraceCount; ++i )
+	{
+		const FVector TraceStart = VerticalStartLocation + i * ForwardVector * VerticalTraceStep;
+		const FVector TraceEnd = TraceStart + UpVector * VerticalTraceLength * -1;
+
+		if (UKismetSystemLibrary::SphereTraceSingleForObjects( this, TraceStart, TraceEnd, HorizontalTraceRadius, TraceObjectTypes, true, ActorsToIgnore, DebugDrawType, TraceHit, true ))
+		{
+			JumpOverLocation = TraceHit.ImpactPoint;
+
+			if ( i == 0 )
+			{
+				JumpToLocation = JumpOverLocation;
+			}
+		}
+		else if ( i !=  0 )
+		{
+			bJumpOverLocationSet = true;
+			break;
+		}
+	}
+
+	if (!bJumpOverLocationSet)
+	{
+		return false;
+	}
+
+	const FVector TraceStart = JumpOverLocation + ForwardVector * VerticalTraceStep;
+
+	if (UKismetSystemLibrary::SphereTraceSingleForObjects( this, TraceStart, JumpOverLocation, HorizontalTraceRadius, TraceObjectTypes, true, ActorsToIgnore, DebugDrawType, TraceHit, true ))
+	{
+		JumpOverLocation = TraceHit.ImpactPoint;
+	}
+
+	if (bShowTraversal)
+	{
+		DrawDebugSphere( GetWorld(), JumpToLocation, 15, 16, FColor::White, false, 7 );
+		DrawDebugSphere( GetWorld(), JumpOverLocation, 15, 16, FColor::White, false, 7 );
+	}
+
+	return true;
 }
 
 void UGameplayAbility_Vault::ActivateAbility( const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData )
 {
 	Super::ActivateAbility( Handle, ActorInfo, ActivationInfo, TriggerEventData );
+
+	if ( !CommitAbility(Handle, ActorInfo, ActivationInfo) )
+	{
+		K2_EndAbility();
+		return;
+	}
+
+	APlayerCharacter* Character = GetActionGameCharacterFromActorInfo();
+	
+	UCapsuleComponent* CapsuleComponent = Character ? Character->GetCapsuleComponent() : nullptr;
+
+	if (CapsuleComponent)
+	{
+		for ( ECollisionChannel Channel : CollisionChannelsToIgnore )
+		{
+			CapsuleComponent->SetCollisionResponseToChannel( Channel, ECollisionResponse::ECR_Ignore );
+		}
+	}
+
+	UCharacterMovementComponent* CharacterMovement = Character ? Character->GetCharacterMovement() : nullptr;
+	if (CharacterMovement)
+	{
+		CharacterMovement->SetMovementMode( EMovementMode::MOVE_Flying );
+	}
+
+	UEG_MotionWarpingComponent* MotionWarpingComponent = Character ? Character->GetEGMotionWarpingComponent() : nullptr;
+	if (MotionWarpingComponent)
+	{
+		MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation( TEXT( "JumpToLocation" ), JumpToLocation, Character->GetActorRotation() );
+		MotionWarpingComponent->AddOrUpdateWarpTargetFromLocationAndRotation( TEXT( "JumpOverLocation" ), JumpOverLocation, Character->GetActorRotation() );
+	}
+
+	MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy( this, NAME_None, VaultMontage );
+	MontageTask->OnBlendOut.AddDynamic( this, &UGameplayAbility_Vault::K2_EndAbility );
+	MontageTask->OnCompleted.AddDynamic( this, &UGameplayAbility_Vault::K2_EndAbility );
+	MontageTask->OnInterrupted.AddDynamic( this, &UGameplayAbility_Vault::K2_EndAbility );
+	MontageTask->OnCancelled.AddDynamic( this, &UGameplayAbility_Vault::K2_EndAbility );
+	MontageTask->ReadyForActivation();
 }
 
 void UGameplayAbility_Vault::EndAbility( const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, bool bReplicateEndAbility, bool bWasCancelled )
 {
+	if ( MontageTask )
+	{
+		MontageTask->EndTask();
+	}
+
+	APlayerCharacter* Character = GetActionGameCharacterFromActorInfo();
+	UCapsuleComponent* CapsuleComponent = Character ? Character->GetCapsuleComponent() : nullptr;
+	if (CapsuleComponent)
+	{
+		for (ECollisionChannel Channel : CollisionChannelsToIgnore)
+		{
+			CapsuleComponent->SetCollisionResponseToChannel( Channel, ECollisionResponse::ECR_Block );
+		}
+	}
+
+	UCharacterMovementComponent* CharacterMovement = Character ? Character->GetCharacterMovement() : nullptr;
+	if (CharacterMovement && CharacterMovement->IsFlying())
+	{
+		CharacterMovement->SetMovementMode( EMovementMode::MOVE_Falling );
+	}
+
+	UEG_MotionWarpingComponent* MotionWarpingComponent = Character ? Character->GetEGMotionWarpingComponent() : nullptr;
+	if (MotionWarpingComponent)
+	{
+		MotionWarpingComponent->RemoveWarpTarget( TEXT( "JumpToLocation" ) );
+		MotionWarpingComponent->RemoveWarpTarget( TEXT( "JumpOverLocation" ) );
+	}
+
 	Super::EndAbility( Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled );
 }

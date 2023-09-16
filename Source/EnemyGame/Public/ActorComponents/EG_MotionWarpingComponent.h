@@ -14,4 +14,5 @@ class ENEMYGAME_API UEG_MotionWarpingComponent : public UMotionWarpingComponent
 {
 	GENERATED_BODY()
 	
+		// Deprecated. Warp points are replicated out of the box 5.1.1+
 };
